@@ -1,5 +1,4 @@
 import math
-import inspect
 from typing import Tuple
 
 import torch
@@ -24,9 +23,14 @@ def apply_rotary_emb(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
     xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
-    freqs_cis = reshape_for_broadcast(freqs_cis, xq_)
-    xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
-    xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
+
+    T_q = xq.shape[1]
+    freqs_cis_q = reshape_for_broadcast(freqs_cis[:T_q], xq_)
+    xq_out = torch.view_as_real(xq_ * freqs_cis_q).flatten(3)
+
+    T_k = xk.shape[1]
+    freqs_cis_k = reshape_for_broadcast(freqs_cis[:T_k], xk_)
+    xk_out = torch.view_as_real(xk_ * freqs_cis_k).flatten(3)
 
     return xq_out.type_as(xq), xk_out.type_as(xk)
 
@@ -103,11 +107,12 @@ class MultiheadAttention(nn.Module):
     def forward(
         self, x: torch.Tensor, mem: torch.Tensor, freqs_cis: torch.Tensor
     ) -> torch.Tensor:
-        B, T, C = x.size()
+        B, T_x, C = x.size()
+        B, T_mem, C = mem.size()
 
-        q = self.q_proj(x).view(B, T, self.n_head, C // self.n_head)
-        k = self.k_proj(mem).view(B, T, self.n_head, C // self.n_head)
-        v = self.v_proj(mem).view(B, T, self.n_head, C // self.n_head)
+        q = self.q_proj(x).view(B, T_x, self.n_head, C // self.n_head)
+        k = self.k_proj(mem).view(B, T_mem, self.n_head, C // self.n_head)
+        v = self.v_proj(mem).view(B, T_mem, self.n_head, C // self.n_head)
 
         q, k = apply_rotary_emb(q, k, freqs_cis=freqs_cis)
 
@@ -129,12 +134,12 @@ class MultiheadAttention(nn.Module):
         else:
             # manual implementation of attention
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-            att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
+            att = att.masked_fill(self.bias[:, :, :T_x, :T_mem] == 0, float("-inf"))
             att = F.softmax(att, dim=-1)
             att = self.attn_dropout(att)
             y = att @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
         y = (
-            y.transpose(1, 2).contiguous().view(B, T, C)
+            y.transpose(1, 2).contiguous().view(B, T_x, C)
         )  # re-assemble all head outputs side by side
 
         # output projection
@@ -200,7 +205,6 @@ class EncoderBlock(nn.Module):
 class Encoder(nn.Module):
     def __init__(
         self,
-        input_dim: int,
         n_layers: int,
         embed_dim: int,
         n_head: int,
@@ -223,10 +227,8 @@ class Encoder(nn.Module):
                 for _ in range(n_layers)
             ]
         )
-        self.input_projection = nn.Linear(input_dim, embed_dim)
 
     def forward(self, x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
-        x = self.input_projection(x)
         for layer in self.layers:
             x = layer(x, freqs_cis)
         return x
@@ -244,7 +246,7 @@ class DecoderBlock(nn.Module):
     ):
         super().__init__()
         self.ln_1 = LayerNorm(embed_dim, bias=bias)
-        self.attn = MultiheadAttention(
+        self.attn_1 = MultiheadAttention(
             embed_dim=embed_dim,
             n_head=n_head,
             bias=bias,
@@ -253,6 +255,15 @@ class DecoderBlock(nn.Module):
             causal=causal,
         )
         self.ln_2 = LayerNorm(embed_dim, bias=bias)
+        self.attn_2 = MultiheadAttention(
+            embed_dim=embed_dim,
+            n_head=n_head,
+            bias=bias,
+            dropout=dropout,
+            block_size=block_size,
+            causal=False,
+        )
+        self.ln_3 = LayerNorm(embed_dim, bias=bias)
         self.mlp = MLP(
             embed_dim=embed_dim,
             bias=bias,
@@ -262,8 +273,10 @@ class DecoderBlock(nn.Module):
     def forward(
         self, x: torch.Tensor, mem: torch.Tensor, freqs_cis: torch.Tensor
     ) -> torch.Tensor:
-        x = x + self.attn(self.ln_1(x), mem, freqs_cis)
-        x = x + self.mlp(self.ln_2(x))
+        x_norm = self.ln_1(x)
+        x = x + self.attn_1(x_norm, x_norm, freqs_cis)
+        x = x + self.attn_2(self.ln_2(x), mem, freqs_cis)
+        x = x + self.mlp(self.ln_3(x))
         return x
 
 
@@ -333,8 +346,9 @@ class Transformer(nn.Module):
         self.block_size = block_size
         self.max_seq_len = max_seq_len
 
+        self.input_projection = nn.Linear(input_dim, embed_dim)
+
         self.encoder = Encoder(
-            input_dim=input_dim,
             n_layers=n_encoder_layers,
             embed_dim=embed_dim,
             n_head=n_head,
@@ -343,6 +357,7 @@ class Transformer(nn.Module):
             block_size=block_size,
             causal=causal_encoder,
         )
+
         self.decoder = Decoder(
             input_dim=input_dim,
             output_dim=output_dim,
@@ -355,6 +370,10 @@ class Transformer(nn.Module):
             causal=causal_decoder,
         )
         self.freqs_cis = precompute_freqs_cis(embed_dim // n_head, max_seq_len)
+
+        self.register_parameter(
+            "start_token", nn.Parameter(torch.randn(1, 1, embed_dim))
+        )
 
         # Init all weights
         self.apply(self._init_weights)
@@ -381,11 +400,18 @@ class Transformer(nn.Module):
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
 
+    def right_shift_input(self, input: torch.Tensor) -> torch.Tensor:
+        start_token = self.start_token.expand(input.shape[0], -1, -1)
+        return torch.concat([start_token, input[:, :-1, :]], dim=1)
+
+    def embed_patch(self, input: torch.Tensor) -> torch.Tensor:
+        return self.input_projection(input)
+
     def forward(
         self, input: torch.Tensor, cond: torch.Tensor, start_pos: int = 0
     ) -> torch.Tensor:
         assert input.shape == cond.shape, "Input and condition must have the same shape"
-        b, t, d = input.shape
+        _, t, _ = input.shape
         assert t <= self.block_size, (
             f"Cannot forward sequence of length {t}, "
             f"block size is only {self.config.block_size}"
@@ -422,8 +448,35 @@ class Transformer(nn.Module):
         return mfu
 
     @torch.no_grad()
-    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
-        """
-        TODO: Implement this method
-        """
-        pass
+    def generate(
+        self,
+        cond: torch.Tensor,
+        window_size: int,
+        context_size: int,
+        start_pos: int = 0,
+    ) -> torch.Tensor:
+        T = cond.shape[1]
+
+        freqs_cis = self.freqs_cis.to(cond.device)
+        freqs_cis = freqs_cis[start_pos : start_pos + T]
+
+        # Encode the conditioning information
+        cond_feature = self.encoder(cond, freqs_cis)
+
+        input_feature = self.start_token.expand(cond.shape[0], -1, -1)
+        recons = [torch.zeros(cond.shape[0], 2, window_size, device=cond.device)]
+
+        for t in range(1, T + 1):
+            recon = self.decoder(input_feature, cond_feature, freqs_cis)
+
+            # Add the new reconstruction
+            recons.append(recon[:, -1, :].reshape(-1, 2, window_size))
+
+            feature_next = torch.concat(
+                [recons[-2][:, :, -context_size:], recons[-1]], dim=-1
+            ).reshape(cond.shape[0], 1, -1)
+            input_feature = torch.concat(
+                [input_feature, self.input_projection(feature_next)], dim=1
+            )
+
+        return torch.stack(recons[1:], dim=1).flatten(start_dim=2)

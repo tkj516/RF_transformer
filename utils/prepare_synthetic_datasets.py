@@ -18,7 +18,7 @@ flags.DEFINE_string("root_dir", None, "Root directory to store new dataset.")
 flags.DEFINE_string("signal_name", None, "Name of the signal.")
 
 
-def generate_dataset(args, generation_fn):
+def generate_dataset(generation_fn):
     with tf.device('cpu'):
         sig, _, _, _ = generation_fn(FLAGS.num_samples, FLAGS.signal_length)
     sig = sig.numpy()
@@ -56,7 +56,7 @@ def main(argv):
         generate_dataset, generation_fn=ofdmfn.generate_ofdm_signal))
 
     args = parser.parse_args()
-    args.func(args)
+    args.func()
 
 
 if __name__ == "__main__":

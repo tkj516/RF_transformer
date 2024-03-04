@@ -1,8 +1,8 @@
-import torch
+from typing import List, Mapping, Tuple, Union
 
+import torch
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import Dataset
-from typing import List, Tuple
 
 
 class MyDistributedDataParallel(DistributedDataParallel):
@@ -17,12 +17,16 @@ class MyDistributedDataParallel(DistributedDataParallel):
         
 
 def nested_to_device(
-        inputs: List[torch.Tensor], 
+        inputs: Union[List[torch.Tensor], Mapping[str, torch.Tensor]], 
         device: torch.device
 ) -> List[torch.Tensor]:
     """Push all tensors in a list to the specified device."""
-    for i, t in enumerate(inputs):
-        inputs[i] = t.to(device)
+    if isinstance(inputs, dict):
+        for k, t in inputs.items():
+            inputs[k] = t.to(device)
+    else:
+        for i, t in enumerate(inputs):
+            inputs[i] = t.to(device)
     return inputs
 
 

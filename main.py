@@ -8,7 +8,7 @@ from torch.multiprocessing import spawn
 
 CONFIG = config_flags.DEFINE_config_file("config")
 FLAGS = flags.FLAGS
-flags.DEFINE_string("trainer", default="low_rank_dsm", help="The trainer type.")
+flags.DEFINE_string("trainer", default="transformer", help="The trainer type.")
 
 
 def _get_free_port():

@@ -1,24 +1,26 @@
 """
-Low rank decomposition of the score.
+Transformer for RF Source Separation.
 """
 
-import functools
 import os
 from typing import List, Tuple
-from matplotlib import pyplot as plt
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-import torchvision
+import torch.nn.functional as F
 from ml_collections import ConfigDict
-from models.transformer import Transformer
 from torch.utils.data import DataLoader, DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
-from torchvision.datasets import ImageFolder
 from tqdm import tqdm
+
+from models.transformer import Transformer
 from utils.class_builder import ClassBuilder
 from utils.dictionary_to_string import dict_to_str
+from utils.lr_schedulers import CosineAnnealingWarmUp
+from utils.rf_dataset import RFDatasetBase
 from utils.utils import (
     MyDistributedDataParallel,
     get_train_val_dataset,
@@ -43,42 +45,7 @@ optimizer_builder = ClassBuilder(OPTIMIZER_REGISTER)
 
 
 DATASET_REGISTER = {
-    "MNIST": functools.partial(
-        torchvision.datasets.MNIST,
-        root="/home/tejasj/data",
-        train=True,
-        download=True,
-        transform=torchvision.transforms.Compose(
-            [
-                torchvision.transforms.ToTensor(),
-                torchvision.transforms.Lambda(lambda t: 2 * t - 1),
-            ]
-        ),
-    ),
-    "CIFAR10": functools.partial(
-        torchvision.datasets.CIFAR10,
-        root="/home/tejasj/data",
-        train=True,
-        download=True,
-        transform=torchvision.transforms.Compose(
-            [
-                torchvision.transforms.ToTensor(),
-                torchvision.transforms.Lambda(lambda t: 2 * t - 1),
-            ]
-        ),
-    ),
-    "ImageNet": functools.partial(
-        ImageFolder,
-        root="/home/jongha/data/imagenet/train",
-        transform=torchvision.transforms.Compose(
-            [
-                torchvision.transforms.Resize(268),
-                torchvision.transforms.RandomCrop(256),
-                torchvision.transforms.ToTensor(),
-                torchvision.transforms.Lambda(lambda t: 2 * t - 1),
-            ]
-        ),
-    ),
+    "RFDatasetBase": RFDatasetBase,
 }
 dataset_register = ClassBuilder(DATASET_REGISTER)
 
@@ -100,16 +67,16 @@ class Learner:
         self.build_optimizer()
 
         # Instantiate the leanring rate scheduler
-        self.lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer,
-            "min",
+        self.lr_scheduler = CosineAnnealingWarmUp(
+            optimizer=self.optimizer,
+            T_max=cfg.trainer_config.max_steps,
+            T_warmup=cfg.trainer_config.warmup_steps,
         )
         self.autocast = torch.cuda.amp.autocast(enabled=cfg.trainer_config.fp16)
         self.scaler = torch.cuda.amp.GradScaler(enabled=cfg.trainer_config.fp16)
 
         # Define the loss functions
-        # TODO: Implement the loss function
-        self.loss_fn = None
+        self.loss_fn = F.mse_loss
 
         # Instantiate a Tensorboard summary writer
         self.writer = SummaryWriter(cfg.trainer_config.model_dir)
@@ -119,7 +86,7 @@ class Learner:
     @property
     def is_master(self):
         return self.rank == 0
-    
+
     def build_optimizer(self):
         # Create param dict and filter out the ones with no grad
         param_dict = {n: p for n, p in self.model.named_parameters() if p.requires_grad}
@@ -128,7 +95,10 @@ class Learner:
         decay_params = [p for _, p in param_dict.items() if p.dim() >= 2]
         no_decay_params = [p for _, p in param_dict.items() if p.dim() < 2]
         optim_groups = [
-            {"params": decay_params, "weight_decay": self.cfg.optimizer_config.weight_decay},
+            {
+                "params": decay_params,
+                "weight_decay": self.cfg.optimizer_config[1].weight_decay,
+            },
             {"params": no_decay_params, "weight_decay": 0.0},
         ]
         num_decay_params = sum(p.numel() for p in decay_params)
@@ -240,6 +210,7 @@ class Learner:
                     ),
                 )
             ):
+                # TODO: Add option for gradient accumulation
                 inputs = nested_to_device(inputs, device)
                 loss = self.train_step(inputs, logging_rank=self.rank == 0)
 
@@ -252,7 +223,7 @@ class Learner:
                         self.save_to_checkpoint()
 
                 if (
-                    self.step > 0
+                    self.step >= 0
                     and self.step % self.cfg.trainer_config.validate_every == 0
                 ):
                     loss = self.validate()
@@ -269,9 +240,7 @@ class Learner:
                     dist.barrier()
                     exit(0)
 
-            # TODO: Peform ablation with learning rate scheduler
-            # loss = self.validate()
-            # self.lr_scheduler.step(loss)
+                self.lr_scheduler.step()
 
     def train_step(
         self,
@@ -279,21 +248,34 @@ class Learner:
         logging_rank: bool = False,
     ) -> torch.Tensor:
         self.optimizer.zero_grad()
+
+        mixture = inputs["mixture"]
+        soi = inputs["soi"]
+        target = inputs["target"]
+
+        soi = self.model.embed_patch(soi)
+        mixture = self.model.embed_patch(mixture)
+
         with self.autocast:
-            loss = self.loss_fn(
-                target=inputs[0],
-                score_model=self.model,
+            preds = self.model(
+                input=self.model.right_shift_input(soi),
+                cond=mixture,
             )
+            loss = self.loss_fn(preds, target)
         self.scaler.scale(loss).backward()
         self.scaler.unscale_(self.optimizer)
-        # nn.utils.clip_grad_norm_(
-        #     self.model.parameters(), self.cfg.trainer_config.clip_max_norm
-        # )
+        if self.cfg.trainer_config.clip_max_norm > 0:
+            nn.utils.clip_grad_norm_(
+                self.model.parameters(), self.cfg.trainer_config.clip_max_norm
+            )
         self.scaler.step(self.optimizer)
         self.scaler.update()
 
         if logging_rank and self.step % self.cfg.trainer_config.log_every == 0:
             self.writer.add_scalar("train/loss", loss, self.step)
+            self.writer.add_scalar(
+                "train/lr", self.optimizer.param_groups[0]["lr"], self.step
+            )
 
         return loss
 
@@ -308,43 +290,36 @@ class Learner:
         ):
             with self.autocast:
                 inputs = nested_to_device(inputs, device)
-                mini_batch_loss = self.loss_fn(
-                    target=inputs[0],
-                    score_model=self.model,
+
+                mixture = inputs["mixture"]
+                soi = inputs["soi"]
+                target = inputs["target"]
+
+                soi = self.model.embed_patch(soi)
+                mixture = self.model.embed_patch(mixture)
+
+                preds = self.model.generate(
+                    cond=mixture,
+                    window_size=self.dataset.window_size,
+                    context_size=self.dataset.context_size,
                 )
-                loss += mini_batch_loss * inputs[0].shape[0] / len(self.val_dataset)
+                loss += (
+                    self.loss_fn(preds, target) * soi.shape[0] / len(self.val_dataset)
+                )
         if self.cfg.trainer_config.distributed:
             dist.reduce(loss, 0, op=dist.ReduceOp.SUM)
+
         if self.rank == 0:
             self.writer.add_scalar("val/loss", loss, self.step)
-
-        # Calculate the spectrum of the score
-        if self.step % self.cfg.trainer_config.spectrum_every == 0:
-            spectrum = 0
-            for inputs in tqdm(self.val_dataloader, desc="Computing spectrum"):
-                inputs = nested_to_device(inputs, device)
-                with self.autocast:
-                    coeffs = self.model.coeffs(inputs[0])
-                    mini_batch_spectrum = (
-                        torch.linalg.norm(
-                            torch.einsum(
-                                "chwl,bl->blchw", self.model.V, coeffs
-                            ).flatten(start_dim=2),
-                            dim=-1,
-                        )
-                        ** 2
-                    )
-                    spectrum += mini_batch_spectrum.sum(dim=0) / len(self.val_dataset)
-            if self.cfg.trainer_config.distributed:
-                dist.reduce(spectrum, 0, op=dist.ReduceOp.SUM)
-            if self.rank == 0:
-                fig, ax = plt.subplots()
-                ax.plot(spectrum.cpu().numpy())
-                self.writer.add_figure(
-                    "val/spectrum",
-                    fig,
-                    self.step,
-                )
+            # Plot one of the reconstructed waveforms
+            waveform = preds[0].cpu().numpy().reshape(-1, 2, self.dataset.window_size)
+            waveform = np.concatenate(
+                [waveform[i] for i in range(waveform.shape[0])], axis=-1
+            )
+            print(waveform.shape)
+            fig, ax = plt.subplots()
+            ax.plot(waveform[0])
+            self.writer.add_figure("val/waveform", fig, self.step)
         self.model.train()
 
         return loss
