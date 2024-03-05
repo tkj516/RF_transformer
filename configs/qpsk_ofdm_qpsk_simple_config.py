@@ -43,14 +43,14 @@ def get_config():
         "AdamW",
         ml_collections.ConfigDict(
             dict(
-                lr=0.0006,
+                lr=0.0001,
                 weight_decay=0.01,
             )
         ),
     ]
 
     config.trainer_config.model_dir = "checkpoints/qpsk_ofdm_qpsk_simple"
-    config.trainer_config.batch_size = 16
+    config.trainer_config.batch_size = 64
     config.trainer_config.train_fraction=0.90
 
     return config

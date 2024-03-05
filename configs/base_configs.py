@@ -22,4 +22,9 @@ def get_config():
         )
     )
 
+    config.lr_scheduler_config = [
+        "IdentityScheduler",
+        ml_collections.ConfigDict(dict()),
+    ]
+
     return config

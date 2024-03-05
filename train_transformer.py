@@ -19,7 +19,7 @@ from tqdm import tqdm
 from models.transformer import Transformer
 from utils.class_builder import ClassBuilder
 from utils.dictionary_to_string import dict_to_str
-from utils.lr_schedulers import CosineAnnealingWarmUp
+from utils.lr_schedulers import CosineAnnealingWarmUp, IdenityScheduler
 from utils.rf_dataset import RFDatasetBase
 from utils.utils import (
     MyDistributedDataParallel,
@@ -42,6 +42,14 @@ OPTIMIZER_REGISTER = {
     "AdamW": torch.optim.AdamW,
 }
 optimizer_builder = ClassBuilder(OPTIMIZER_REGISTER)
+
+
+LR_SCHEDULER_REGISTER = {
+    "IdentityScheduler": IdenityScheduler,
+    "CosineAnnealingWarmUp": CosineAnnealingWarmUp,
+    "ReduceLROnPlateau": torch.optim.lr_scheduler.ReduceLROnPlateau,
+}
+lr_scheduler_builder = ClassBuilder(LR_SCHEDULER_REGISTER)
 
 
 DATASET_REGISTER = {
@@ -67,10 +75,8 @@ class Learner:
         self.build_optimizer()
 
         # Instantiate the leanring rate scheduler
-        self.lr_scheduler = CosineAnnealingWarmUp(
-            optimizer=self.optimizer,
-            T_max=cfg.trainer_config.max_steps,
-            T_warmup=cfg.trainer_config.warmup_steps,
+        self.lr_scheduler = lr_scheduler_builder.build(
+            cfg.lr_scheduler_config, optimizer=self.optimizer
         )
         self.autocast = torch.cuda.amp.autocast(enabled=cfg.trainer_config.fp16)
         self.scaler = torch.cuda.amp.GradScaler(enabled=cfg.trainer_config.fp16)
@@ -116,6 +122,7 @@ class Learner:
         self.optimizer, _ = optimizer_builder.build(
             self.cfg.optimizer_config,
             params=optim_groups,
+            fused=True,
         )
 
     def build_dataloaders(self):
@@ -223,7 +230,7 @@ class Learner:
                         self.save_to_checkpoint()
 
                 if (
-                    self.step >= 0
+                    self.step > 0
                     and self.step % self.cfg.trainer_config.validate_every == 0
                 ):
                     loss = self.validate()
@@ -240,7 +247,7 @@ class Learner:
                     dist.barrier()
                     exit(0)
 
-                self.lr_scheduler.step()
+                self.lr_scheduler.step(loss)
 
     def train_step(
         self,
@@ -316,7 +323,6 @@ class Learner:
             waveform = np.concatenate(
                 [waveform[i] for i in range(waveform.shape[0])], axis=-1
             )
-            print(waveform.shape)
             fig, ax = plt.subplots()
             ax.plot(waveform[0])
             self.writer.add_figure("val/waveform", fig, self.step)
