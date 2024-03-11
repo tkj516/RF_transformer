@@ -75,6 +75,61 @@ class RFDatasetBase(Dataset):
         }
 
 
+class ICASSPDataset(Dataset):
+    def __init__(
+        self,
+        root_dir: str,
+        window_size: int,
+        context_size: int,
+    ):
+        self.root_dir = root_dir
+        self.window_size = window_size
+        self.context_size = context_size
+
+        self.files = glob.glob(os.path.join(root_dir, "*.npy"))
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        npy_file = np.load(self.files[idx], allow_pickle=True).item()
+        soi = torch.from_numpy(npy_file["sample_soi"]).to(
+            torch.float32
+        )
+        mixture = torch.from_numpy(npy_file["sample_mix"]).to(
+            torch.float32
+        )
+
+        sequence_length = (mixture.shape[0] // self.window_size) * self.window_size
+
+        soi = soi[:sequence_length]
+        mixture = mixture[:sequence_length]
+
+        soi_target = soi.unfold(0, self.window_size, self.window_size).reshape(
+            -1, self.window_size * 2
+        )
+
+        soi = F.pad(soi, (0, 0, self.context_size, 0))
+        mixture = F.pad(mixture, (0, 0, self.context_size, 0))
+        soi_windows = soi.unfold(
+            0, self.context_size + self.window_size, self.window_size
+        ).reshape(-1, (self.window_size + self.context_size) * 2)
+        mixture_windows = mixture.unfold(
+            0, self.context_size + self.window_size, self.window_size
+        ).reshape(-1, (self.window_size + self.context_size) * 2)
+
+        assert soi_windows.shape[0] == soi_target.shape[0], (
+            soi_windows.shape,
+            soi_target.shape,
+        )
+
+        return {
+            "soi": soi_windows,
+            "mixture": mixture_windows,
+            "target": soi_target,
+        }
+
+
 if __name__ == "__main__":
     dataset = RFDatasetBase(
         soi_root_dir="/home/tejasj/data2/RF_transformer/dataset/qpsk/qpsk_200000_160",

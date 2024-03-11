@@ -20,7 +20,7 @@ from models.transformer import Transformer
 from utils.class_builder import ClassBuilder
 from utils.dictionary_to_string import dict_to_str
 from utils.lr_schedulers import CosineAnnealingWarmUp, IdenityScheduler
-from utils.rf_dataset import RFDatasetBase
+from utils.rf_dataset import ICASSPDataset, RFDatasetBase
 from utils.utils import (
     MyDistributedDataParallel,
     get_train_val_dataset,
@@ -53,6 +53,7 @@ lr_scheduler_builder = ClassBuilder(LR_SCHEDULER_REGISTER)
 
 
 DATASET_REGISTER = {
+    "ICASSPDataset": ICASSPDataset,
     "RFDatasetBase": RFDatasetBase,
 }
 dataset_register = ClassBuilder(DATASET_REGISTER)
@@ -75,7 +76,7 @@ class Learner:
         self.build_optimizer()
 
         # Instantiate the leanring rate scheduler
-        self.lr_scheduler = lr_scheduler_builder.build(
+        self.lr_scheduler, _ = lr_scheduler_builder.build(
             cfg.lr_scheduler_config, optimizer=self.optimizer
         )
         self.autocast = torch.cuda.amp.autocast(enabled=cfg.trainer_config.fp16)

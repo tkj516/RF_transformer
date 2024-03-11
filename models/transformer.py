@@ -414,7 +414,7 @@ class Transformer(nn.Module):
         _, t, _ = input.shape
         assert t <= self.block_size, (
             f"Cannot forward sequence of length {t}, "
-            f"block size is only {self.config.block_size}"
+            f"block size is only {self.block_size}"
         )
 
         freqs_cis = self.freqs_cis.to(input.device)

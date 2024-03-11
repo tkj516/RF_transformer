@@ -9,8 +9,6 @@ from tqdm import tqdm
 import rfcutils2 as rfcutils
 import tensorflow as tf
 
-from torch.utils.data import Dataset
-
 
 def get_db(p):
     return 10 * np.log10(p)
@@ -163,7 +161,8 @@ if __name__ == "__main__":
     interference_sig_type = args.interference_sig_type
     with h5py.File(
         os.path.join(
-            "dataset", "interferenceset_frame", interference_sig_type + "_raw_data.h5"
+            "/home/tejasj/data2/dataset/interferenceset_frame", 
+            interference_sig_type + "_raw_data.h5"
         ),
         "r",
     ) as data_h5file:
