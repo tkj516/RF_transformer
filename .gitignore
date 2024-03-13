@@ -11,3 +11,4 @@ input.txt
 *.npy
 *events*
 *.h5
+rftorch_environment.yml
