@@ -28,7 +28,6 @@ from utils.utils import (
 )
 
 torch.backends.cudnn.benchmark = True
-os.environ["TORCH_HOME"] = "/home/tejasj/data/compression/datasets"
 
 
 MODELS_REGISTER = {
