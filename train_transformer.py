@@ -306,14 +306,20 @@ class Learner:
                 soi = self.model.embed_patch(soi)
                 mixture = self.model.embed_patch(mixture)
 
-                preds = self.model.generate(
+                preds = self.model(
+                    input=self.model.right_shift_input(soi),
                     cond=mixture,
-                    window_size=self.dataset.window_size,
-                    context_size=self.dataset.context_size,
                 )
                 loss += (
                     self.loss_fn(preds, target) * soi.shape[0] / len(self.val_dataset)
                 )
+
+        preds = self.model.generate(
+            cond=mixture,
+            window_size=self.dataset.window_size,
+            context_size=self.dataset.context_size,
+        )
+
         if self.cfg.trainer_config.distributed:
             dist.reduce(loss, 0, op=dist.ReduceOp.SUM)
 

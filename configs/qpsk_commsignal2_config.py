@@ -8,7 +8,9 @@ def get_config():
     config.dataset_config = [
         "ICASSPDataset",
         dict(
-            root_dir="/home/tejasj/data2/RF_transformer/npydataset/Dataset_QPSK_CommSignal2_Mixture",
+            root_dir=(
+                "/home/tejasj/data2/RF_transformer/npydataset/Dataset_QPSK_CommSignal2_Mixture"
+            ),
             window_size=128,
             context_size=32,
         ),
@@ -46,6 +48,6 @@ def get_config():
 
     config.trainer_config.model_dir = "checkpoints/qpsk_commsignal2"
     config.trainer_config.batch_size = 32
-    config.trainer_config.train_fraction=0.90
+    config.trainer_config.train_fraction=0.95
 
     return config
