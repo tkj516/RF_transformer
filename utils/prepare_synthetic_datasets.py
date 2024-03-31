@@ -1,4 +1,7 @@
 import sys
+
+from regex import F
+
 sys.path.append("..")
 
 import functools
@@ -19,15 +22,27 @@ flags.DEFINE_string("signal_name", None, "Name of the signal.")
 
 
 def generate_dataset(generation_fn):
-    with tf.device('cpu'):
-        sig, _, _, _ = generation_fn(FLAGS.num_samples, FLAGS.signal_length)
-    sig = sig.numpy()
+    batch_size = 100
+
+    batches = FLAGS.num_samples // batch_size * [batch_size] + [
+        FLAGS.num_samples % batch_size
+    ]
+    all_sig = []
+    for b in batches:
+        with tf.device("cpu"):
+            sig, _, _, _ = generation_fn(b, FLAGS.signal_length)
+        sig = sig.numpy()
+        all_sig.append(sig)
+    sig = np.concatenate(all_sig, axis=0)
 
     if not os.path.exists(os.path.join("../dataset", FLAGS.root_dir)):
         os.makedirs(os.path.join("../dataset", FLAGS.root_dir), exist_ok=True)
 
-    savedir = os.path.join("../dataset", FLAGS.root_dir,
-                           f"{FLAGS.signal_name}_{FLAGS.num_samples}_{FLAGS.signal_length}")
+    savedir = os.path.join(
+        "../dataset",
+        FLAGS.root_dir,
+        f"{FLAGS.signal_name}_{FLAGS.num_samples}_{FLAGS.signal_length}",
+    )
     if os.path.exists(savedir):
         raise ValueError("Data directory already exists!")
     else:
@@ -41,19 +56,23 @@ def generate_dataset(generation_fn):
 
 def main(_):
     parser = argparse_flags.ArgumentParser(
-        description="Arguments for generating RF datasets.")
-    subparsers = parser.add_subparsers(
-        help="Subparsers for different data types")
+        description="Arguments for generating RF datasets."
+    )
+    subparsers = parser.add_subparsers(help="Subparsers for different data types")
 
-    parser_qpsk = subparsers.add_parser(
-        "qpsk", help="Generate QPSK dataset.")
-    parser_qpsk.set_defaults(func=functools.partial(
-        generate_dataset, generation_fn=qpskfn.generate_qpsk_signal))
+    parser_qpsk = subparsers.add_parser("qpsk", help="Generate QPSK dataset.")
+    parser_qpsk.set_defaults(
+        func=functools.partial(
+            generate_dataset, generation_fn=qpskfn.generate_qpsk_signal
+        )
+    )
 
-    parser_ofdm = subparsers.add_parser(
-        "ofdm", help="Generate general OFDM dataset.")
-    parser_ofdm.set_defaults(func=functools.partial(
-        generate_dataset, generation_fn=ofdmfn.generate_ofdm_signal))
+    parser_ofdm = subparsers.add_parser("ofdm", help="Generate general OFDM dataset.")
+    parser_ofdm.set_defaults(
+        func=functools.partial(
+            generate_dataset, generation_fn=ofdmfn.generate_ofdm_signal
+        )
+    )
 
     args = parser.parse_args()
     args.func()

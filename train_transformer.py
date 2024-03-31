@@ -2,7 +2,6 @@
 Transformer for RF Source Separation.
 """
 
-from gettext import find
 import os
 from typing import List, Tuple
 
@@ -236,7 +235,7 @@ class Learner:
                         self.save_to_checkpoint()
 
                 if (
-                    self.step >= 0
+                    self.step > 0
                     and self.step % self.cfg.trainer_config.validate_every == 0
                 ):
                     loss = self.validate()

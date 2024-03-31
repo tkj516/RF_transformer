@@ -8,7 +8,7 @@ def get_config():
     config.dataset_config = [
         "UnsynchronizedRFDataset",
         dict(
-            soi_root_dir="/home/tejasj/data2/RF_transformer/dataset/qpsk/qpsk_1000_2561",
+            soi_root_dir="/home/tejasj/data2/RF_transformer/dataset/qpsk/qpsk_100000_2561",
             interference_root_dir="/home/tejasj/data2/RF_transformer/dataset/CommSignal2",
             window_size=128,
             context_size=32,
