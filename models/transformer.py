@@ -386,9 +386,6 @@ class Transformer(nn.Module):
                     std=0.02 / math.sqrt(n_encoder_layers + n_decoder_layers),
                 )
 
-        # Report number of parameters
-        print("Number of parameters: %.2fM" % (self.num_params / 1e6,))
-
     @property
     def num_params(self) -> int:
         n_params = sum(p.numel() for p in self.parameters())

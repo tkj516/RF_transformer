@@ -39,7 +39,7 @@ def generate_dataset(generation_fn):
     print(f"Data saved to {savedir}")
 
 
-def main(argv):
+def main(_):
     parser = argparse_flags.ArgumentParser(
         description="Arguments for generating RF datasets.")
     subparsers = parser.add_subparsers(

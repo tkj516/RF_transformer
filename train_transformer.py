@@ -2,6 +2,7 @@
 Transformer for RF Source Separation.
 """
 
+from gettext import find
 import os
 from typing import List, Tuple
 
@@ -17,10 +18,11 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from models.transformer import Transformer
+import rfcutils2
 from utils.class_builder import ClassBuilder
 from utils.dictionary_to_string import dict_to_str
 from utils.lr_schedulers import CosineAnnealingWarmUp, IdenityScheduler
-from utils.rf_dataset import ICASSPDataset, RFDatasetBase
+from utils.rf_dataset import ICASSPDataset, RFDatasetBase, UnsynchronizedRFDataset
 from utils.utils import (
     MyDistributedDataParallel,
     get_train_val_dataset,
@@ -54,6 +56,7 @@ lr_scheduler_builder = ClassBuilder(LR_SCHEDULER_REGISTER)
 DATASET_REGISTER = {
     "ICASSPDataset": ICASSPDataset,
     "RFDatasetBase": RFDatasetBase,
+    "UnsynchronizedRFDataset": UnsynchronizedRFDataset,
 }
 dataset_register = ClassBuilder(DATASET_REGISTER)
 
@@ -107,16 +110,18 @@ class Learner:
             },
             {"params": no_decay_params, "weight_decay": 0.0},
         ]
-        num_decay_params = sum(p.numel() for p in decay_params)
-        num_no_decay_params = sum(p.numel() for p in no_decay_params)
-        print(
-            f"Number of decay parameter tensors: {len(decay_params)} "
-            f"with {num_decay_params} parameters."
-        )
-        print(
-            f"Number of no decay parameter tensors: {len(no_decay_params)} "
-            f"with {num_no_decay_params} parameters."
-        )
+
+        if self.rank == 0:
+            num_decay_params = sum(p.numel() for p in decay_params)
+            num_no_decay_params = sum(p.numel() for p in no_decay_params)
+            print(
+                f"Number of decay parameter tensors: {len(decay_params)} "
+                f"with {num_decay_params} parameters."
+            )
+            print(
+                f"Number of no decay parameter tensors: {len(no_decay_params)} "
+                f"with {num_no_decay_params} parameters."
+            )
 
         # Create the optimizer
         self.optimizer, _ = optimizer_builder.build(
@@ -208,15 +213,16 @@ class Learner:
     def train(self):
         device = next(self.model.parameters()).device
         while True:
-            for _, inputs in enumerate(
-                tqdm(
-                    self.train_dataloader,
+            iterable = self.train_dataloader
+            if self.rank == 0:
+                iterable = tqdm(
+                    iterable,
                     desc=(
                         f"Training ({self.step}"
                         f" / {self.cfg.trainer_config.max_steps})"
                     ),
                 )
-            ):
+            for _, inputs in enumerate(iterable):
                 # TODO: Add option for gradient accumulation
                 inputs = nested_to_device(inputs, device)
                 loss = self.train_step(inputs, logging_rank=self.rank == 0)
@@ -230,7 +236,7 @@ class Learner:
                         self.save_to_checkpoint()
 
                 if (
-                    self.step > 0
+                    self.step >= 0
                     and self.step % self.cfg.trainer_config.validate_every == 0
                 ):
                     loss = self.validate()
@@ -247,7 +253,8 @@ class Learner:
                     dist.barrier()
                     exit(0)
 
-                self.lr_scheduler.step(loss)
+            loss = self.validate()
+            self.lr_scheduler.step(loss)
 
     def train_step(
         self,
@@ -292,9 +299,16 @@ class Learner:
         self.model.eval()
 
         loss = 0
-        for inputs in tqdm(
-            self.val_dataloader, desc=f"Running validation after step {self.step}"
-        ):
+        all_soi_est = []
+        all_soi_gt = []
+
+        iterable = self.val_dataloader
+        if self.rank == 0:
+            iterable = tqdm(
+                iterable,
+                desc=f"Running validation after step {self.step}",
+            )
+        for inputs in iterable:
             with self.autocast:
                 inputs = nested_to_device(inputs, device)
 
@@ -313,6 +327,59 @@ class Learner:
                     self.loss_fn(preds, target) * soi.shape[0] / len(self.val_dataset)
                 )
 
+            # Recover the waveforms in the time domain
+            pred_waveform = (
+                preds.cpu()
+                .reshape(*preds.shape[:2], 2, self.dataset.window_size)
+                .permute(0, 1, 3, 2)
+                .reshape(preds.shape[0], -1, 2)
+            )
+            target_waveform = (
+                target.cpu()
+                .reshape(*target.shape[:2], 2, self.dataset.window_size)
+                .permute(0, 1, 3, 2)
+                .reshape(target.shape[0], -1, 2)
+            )
+            pred_waveform = torch.view_as_complex(pred_waveform)
+            target_waveform = torch.view_as_complex(target_waveform)
+
+            if isinstance(self.dataset, UnsynchronizedRFDataset):
+                slice_idx = inputs["soi_offset"].reshape(-1, 1) + torch.arange(
+                    self.dataset.signal_length - self.dataset.number_soi_offsets,
+                    device=inputs["soi_offset"].device,
+                ).reshape(1, -1)
+                pred_waveform = torch.take_along_dim(
+                    pred_waveform, slice_idx.to(pred_waveform.device), dim=1
+                )
+                target_waveform = torch.take_along_dim(
+                    target_waveform, slice_idx.to(target_waveform.device), dim=1
+                )
+
+            all_soi_est.append(pred_waveform.numpy())
+            all_soi_gt.append(target_waveform.numpy())
+
+        # Compute the bit error rate (BER)
+        soi_est = np.concatenate(all_soi_est, axis=0)
+        soi_gt = np.concatenate(all_soi_gt, axis=0)
+
+        demod_soi = rfcutils2.qpsk_matched_filter_demod
+
+        bit_est = []
+        bit_gt = []
+        for est, gt in zip(np.split(soi_est, 25), np.split(soi_gt, 25)):
+            bit_est_batch, _ = demod_soi(est)
+            bit_gt_batch, _ = demod_soi(gt)
+            bit_est.append(bit_est_batch.numpy())
+            bit_gt.append(bit_gt_batch.numpy())
+        bit_est = np.concatenate(bit_est, axis=0)
+        bit_gt = np.concatenate(bit_gt, axis=0)
+
+        ber = torch.tensor(
+            np.mean(bit_est != bit_gt) * bit_est.shape[0] / len(self.val_dataset),
+            device=loss.device,
+        )
+
+        # Autoregressively generate one waveform
         preds = self.model.generate(
             cond=mixture,
             window_size=self.dataset.window_size,
@@ -321,9 +388,11 @@ class Learner:
 
         if self.cfg.trainer_config.distributed:
             dist.reduce(loss, 0, op=dist.ReduceOp.SUM)
+            dist.reduce(ber, 0, op=dist.ReduceOp.SUM)
 
         if self.rank == 0:
             self.writer.add_scalar("val/loss", loss, self.step)
+            self.writer.add_scalar("val/ber", ber, self.step)
             # Plot one of the reconstructed waveforms
             waveform = preds[0].cpu().numpy().reshape(-1, 2, self.dataset.window_size)
             waveform = np.concatenate(
@@ -332,6 +401,7 @@ class Learner:
             fig, ax = plt.subplots()
             ax.plot(waveform[0])
             self.writer.add_figure("val/waveform", fig, self.step)
+
         self.model.train()
 
         return loss
@@ -366,5 +436,7 @@ def train_distributed(rank: int, world_size: int, port, cfg: ConfigDict):
     torch.cuda.set_device(device)
     model, _ = image_transforms_builder.build(cfg.model_config)
     model.to(device)
-    model = MyDistributedDataParallel(model, device_ids=[rank])
+    model = MyDistributedDataParallel(
+        model, device_ids=[rank], find_unused_parameters=True
+    )
     _train_impl(rank, model, cfg)

@@ -1,5 +1,6 @@
 import glob
 import os
+import signal
 
 import numpy as np
 import torch
@@ -93,12 +94,8 @@ class ICASSPDataset(Dataset):
 
     def __getitem__(self, idx):
         npy_file = np.load(self.files[idx], allow_pickle=True).item()
-        soi = torch.from_numpy(npy_file["sample_soi"]).to(
-            torch.float32
-        )
-        mixture = torch.from_numpy(npy_file["sample_mix"]).to(
-            torch.float32
-        )
+        soi = torch.from_numpy(npy_file["sample_soi"]).to(torch.float32)
+        mixture = torch.from_numpy(npy_file["sample_mix"]).to(torch.float32)
 
         sequence_length = (mixture.shape[0] // self.window_size) * self.window_size
 
@@ -127,6 +124,89 @@ class ICASSPDataset(Dataset):
             "soi": soi_windows,
             "mixture": mixture_windows,
             "target": soi_target,
+        }
+
+
+class UnsynchronizedRFDataset(RFDatasetBase):
+    def __init__(
+        self,
+        soi_root_dir: str,
+        interference_root_dir: str,
+        window_size: int,
+        context_size: int,
+        signal_length: int,
+        number_soi_offsets: int,
+        use_rand_phase: bool = True,
+    ):
+        super().__init__(
+            soi_root_dir=soi_root_dir,
+            interference_root_dir=interference_root_dir,
+            window_size=window_size,
+            context_size=context_size,
+        )
+
+        assert (
+            signal_length % window_size == 0
+        ), "Signal length should be multiple of window size"
+
+        self.signal_length = signal_length
+        self.number_soi_offsets = number_soi_offsets
+        self.use_rand_phase = use_rand_phase
+
+    def __len__(self):
+        return len(self.soi_files)
+
+    def __getitem__(self, idx):
+        soi_idx = idx
+        interference_idx = np.random.randint(len(self.interference_files))
+
+        soi = np.load(self.soi_files[soi_idx])
+        interference = np.load(self.interference_files[interference_idx])
+
+        rand_soi_start_idx = np.random.randint(self.number_soi_offsets)
+        rand_interference_start_idx = np.random.randint(
+            len(interference) - self.signal_length
+        )
+
+        soi = soi[rand_soi_start_idx : rand_soi_start_idx + self.signal_length]
+        interference = interference[
+            rand_interference_start_idx : rand_interference_start_idx
+            + self.signal_length
+        ]
+
+        sinr_db = -36 * np.random.rand() + 3
+        coeff = 10 ** (-0.5 * sinr_db / 10)
+        if self.use_rand_phase:
+            rand_phase = np.random.rand()
+            coeff = coeff * np.exp(1j * 2 * np.pi * rand_phase)
+        mixture = soi + coeff * interference
+
+        soi = torch.view_as_real(torch.from_numpy(soi)).to(torch.float32)
+        mixture = torch.view_as_real(torch.from_numpy(mixture)).to(torch.float32)
+
+        soi_target = soi.unfold(0, self.window_size, self.window_size).reshape(
+            -1, self.window_size * 2
+        )
+
+        soi = F.pad(soi, (0, 0, self.context_size, 0))
+        mixture = F.pad(mixture, (0, 0, self.context_size, 0))
+        soi_windows = soi.unfold(
+            0, self.context_size + self.window_size, self.window_size
+        ).reshape(-1, (self.window_size + self.context_size) * 2)
+        mixture_windows = mixture.unfold(
+            0, self.context_size + self.window_size, self.window_size
+        ).reshape(-1, (self.window_size + self.context_size) * 2)
+
+        assert soi_windows.shape[0] == soi_target.shape[0], (
+            soi_windows.shape,
+            soi_target.shape,
+        )
+
+        return {
+            "soi": soi_windows,
+            "mixture": mixture_windows,
+            "target": soi_target,
+            "soi_offset": rand_soi_start_idx,
         }
 
 
