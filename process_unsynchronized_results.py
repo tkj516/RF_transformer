@@ -24,7 +24,7 @@ ALL_SINR = np.arange(-30, 0.1, 3)
 
 
 def run_demod_test(results_dir: str):
-    soi_gt, bits_gt, soi_est, bits_est = map(
+    soi_est, bits_est = map(
         lambda sig_type: np.load(
             open(
                 os.path.join(
@@ -35,7 +35,21 @@ def run_demod_test(results_dir: str):
                 "rb",
             )
         ),
-        ["gt_soi", "gt_bits", "estimated_soi", "estimated_bits"],
+        ["estimated_soi", "estimated_bits"],
+    )
+   
+    soi_gt, bits_gt = map(
+        lambda sig_type: np.load(
+            open(
+                os.path.join(
+                    results_dir,
+                    f"gt_{FLAGS.testset_identifier}_{sig_type}_"
+                    f"{FLAGS.soi_type}_{FLAGS.interference_sig_type}.npy",
+                ),
+                "rb",
+            )
+        ),
+        ["soi", "bits"],
     )
 
     # Evaluation pipeline
@@ -81,11 +95,6 @@ def main(_):
 
     mse_mean, ber_mean = run_demod_test(
         FLAGS.results_dir,
-    )
-
-    os.makedirs(
-        os.path.join("eval_outputs/results/unsynchronized", f"{id_string}"),
-        exist_ok=True,
     )
 
     pickle.dump(
