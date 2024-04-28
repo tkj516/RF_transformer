@@ -240,6 +240,68 @@ class UnsynchronizedRFDataset(RFDatasetBase):
         }
 
 
+class UnsynchronizedRFDatasetWaveNet(Dataset):
+    def __init__(
+        self,
+        soi_root_dir: str,
+        interference_root_dir: str,
+        signal_length: int,
+        number_soi_offsets: int,
+        use_rand_phase: bool = True,
+    ):
+        self.soi_files = glob.glob(os.path.join(soi_root_dir, "*.npy"))
+        self.interference_files = glob.glob(
+            os.path.join(interference_root_dir, "*.npy")
+        )
+
+        self.signal_length = signal_length
+        self.number_soi_offsets = number_soi_offsets
+        self.use_rand_phase = use_rand_phase
+
+    def __len__(self):
+        return len(self.soi_files)
+
+    def __getitem__(self, idx):
+        soi_idx = idx
+        interference_idx = np.random.randint(len(self.interference_files))
+
+        soi = np.load(self.soi_files[soi_idx])
+        interference = np.load(self.interference_files[interference_idx])
+
+        rand_soi_start_idx = np.random.randint(self.number_soi_offsets)
+        rand_interference_start_idx = np.random.randint(
+            len(interference) - self.signal_length
+        )
+
+        soi = soi[rand_soi_start_idx : rand_soi_start_idx + self.signal_length]
+        interference = interference[
+            rand_interference_start_idx : rand_interference_start_idx
+            + self.signal_length
+        ]
+
+        sinr_db = -36 * np.random.rand() + 3
+        coeff = 10 ** (-0.5 * sinr_db / 10)
+        if self.use_rand_phase:
+            rand_phase = np.random.rand()
+            coeff = coeff * np.exp(1j * 2 * np.pi * rand_phase)
+        mixture = soi + coeff * interference
+
+        soi = (
+            torch.view_as_real(torch.from_numpy(soi)).transpose(0, 1).to(torch.float32)
+        )
+        mixture = (
+            torch.view_as_real(torch.from_numpy(mixture))
+            .transpose(0, 1)
+            .to(torch.float32)
+        )
+
+        return {
+            "soi": soi,
+            "mixture": mixture,
+            "soi_offset": rand_soi_start_idx,
+        }
+
+
 if __name__ == "__main__":
     dataset = RFDatasetBase(
         soi_root_dir="/home/tejasj/data2/RF_transformer/dataset/qpsk/qpsk_200000_160",
