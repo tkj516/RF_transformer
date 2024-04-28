@@ -1,6 +1,6 @@
 import glob
 import os
-import signal
+from typing import Tuple, Union
 
 import numpy as np
 import torch
@@ -14,12 +14,18 @@ class RFDatasetBase(Dataset):
         soi_root_dir: str,
         interference_root_dir: str,
         window_size: int,
-        context_size: int,
+        context_size: Union[int, Tuple[int, int]],
     ):
         self.soi_root_dir = soi_root_dir
         self.interference_root_dir = interference_root_dir
         self.window_size = window_size
-        self.context_size = context_size
+
+        if isinstance(context_size, int):
+            self.left_context_size = context_size
+            self.right_context_size = 0
+        else:
+            self.left_context_size = context_size[0]
+            self.right_context_size = context_size[1]
 
         self.soi_files = glob.glob(os.path.join(soi_root_dir, "*.npy"))
         self.interference_files = glob.glob(
@@ -47,14 +53,26 @@ class RFDatasetBase(Dataset):
             -1, self.window_size * 2
         )
 
-        soi = F.pad(soi, (0, 0, self.context_size, 0))
-        interference = F.pad(interference, (0, 0, self.context_size, 0))
+        soi = F.pad(soi, (0, 0, self.left_context_size, self.right_context_size))
+        interference = F.pad(
+            interference, (0, 0, self.left_context_size, self.right_context_size)
+        )
         soi_windows = soi.unfold(
-            0, self.context_size + self.window_size, self.window_size
-        ).reshape(-1, (self.window_size + self.context_size) * 2)
+            0,
+            self.left_context_size + self.window_size + self.right_context_size,
+            self.window_size,
+        ).reshape(
+            -1,
+            (self.left_context_size + self.window_size + self.right_context_size) * 2,
+        )
         interference_windows = interference.unfold(
-            0, self.context_size + self.window_size, self.window_size
-        ).reshape(-1, (self.window_size + self.context_size) * 2)
+            0,
+            self.left_context_size + self.window_size + self.right_context_size,
+            self.window_size,
+        ).reshape(
+            -1,
+            (self.left_context_size + self.window_size + self.right_context_size) * 2,
+        )
 
         assert (
             soi_windows.shape[0] == interference_windows.shape[0] == soi_target.shape[0]
@@ -133,7 +151,7 @@ class UnsynchronizedRFDataset(RFDatasetBase):
         soi_root_dir: str,
         interference_root_dir: str,
         window_size: int,
-        context_size: int,
+        context_size: Union[int, Tuple[int, int]],
         signal_length: int,
         number_soi_offsets: int,
         use_rand_phase: bool = True,
@@ -188,14 +206,26 @@ class UnsynchronizedRFDataset(RFDatasetBase):
             -1, self.window_size * 2
         )
 
-        soi = F.pad(soi, (0, 0, self.context_size, 0))
-        mixture = F.pad(mixture, (0, 0, self.context_size, 0))
+        soi = F.pad(soi, (0, 0, self.left_context_size, self.right_context_size))
+        mixture = F.pad(
+            mixture, (0, 0, self.left_context_size, self.right_context_size)
+        )
         soi_windows = soi.unfold(
-            0, self.context_size + self.window_size, self.window_size
-        ).reshape(-1, (self.window_size + self.context_size) * 2)
+            0,
+            self.left_context_size + self.window_size + self.right_context_size,
+            self.window_size,
+        ).reshape(
+            -1,
+            (self.left_context_size + self.window_size + self.right_context_size) * 2,
+        )
         mixture_windows = mixture.unfold(
-            0, self.context_size + self.window_size, self.window_size
-        ).reshape(-1, (self.window_size + self.context_size) * 2)
+            0,
+            self.left_context_size + self.window_size + self.right_context_size,
+            self.window_size,
+        ).reshape(
+            -1,
+            (self.left_context_size + self.window_size + self.right_context_size) * 2,
+        )
 
         assert soi_windows.shape[0] == soi_target.shape[0], (
             soi_windows.shape,
