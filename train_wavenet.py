@@ -206,7 +206,7 @@ class Learner:
                         self.save_to_checkpoint()
 
                 if (
-                    self.step > 0
+                    self.step >= 0
                     and self.step % self.cfg.trainer_config.validate_every == 0
                 ):
                     loss = self.validate()
@@ -283,8 +283,12 @@ class Learner:
                 )
 
             # Recover the waveforms in the time domain
-            pred_waveform = torch.view_as_complex(preds.permute(0, 2, 1))
-            target_waveform = torch.view_as_complex(target.permute(0, 2, 1))
+            pred_waveform = torch.view_as_complex(
+                preds.permute(0, 2, 1).contiguous()
+            ).cpu()
+            target_waveform = torch.view_as_complex(
+                target.permute(0, 2, 1).contiguous()
+            ).cpu()
 
             if isinstance(self.dataset, UnsynchronizedRFDatasetWaveNet):
                 slice_idx = inputs["soi_offset"].reshape(-1, 1) + torch.arange(

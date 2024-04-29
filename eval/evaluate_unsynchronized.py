@@ -1,3 +1,7 @@
+import sys
+
+sys.path.append("..")
+
 import glob
 import os
 from typing import Callable
@@ -12,6 +16,7 @@ from tqdm import tqdm
 
 import rfcutils2 as rfcutils
 from models.transformer import Transformer
+from models.transformer_decoder import Transformer as TransformerDecoder
 from torch.utils.data import Dataset, DataLoader
 from utils.dataset import get_soi_generation_fn
 
@@ -48,6 +53,9 @@ flags.DEFINE_string(
 flags.DEFINE_integer("batch_size", default=10, help="Batch size for inference")
 flags.DEFINE_bool("matched_filter_only", default=False, help="Run matched filter only")
 flags.DEFINE_bool("lmmse", default=False, help="Run LMMSE")
+flags.DEFINE_bool(
+    "decoder_only", default=False, help="Use decoder only transformer model."
+)
 
 
 ALL_SINR = np.arange(-30, 0.1, 3)
@@ -134,14 +142,25 @@ def process_inputs(
         soi.shape[0], -1, window_size * 2
     )
 
-    soi = F.pad(soi, (0, 0, context_size, 0, 0, 0))
-    mixture = F.pad(mixture, (0, 0, context_size, 0, 0, 0))
-    soi_windows = soi.unfold(1, context_size + window_size, window_size).reshape(
-        soi.shape[0], -1, (window_size + context_size) * 2
+    if isinstance(context_size, int):
+        left_context_size = context_size
+        right_context_size = 0
+    else:
+        left_context_size = context_size[0]
+        right_context_size = context_size[1]
+
+    soi = F.pad(soi, (0, 0, left_context_size, right_context_size, 0, 0))
+    mixture = F.pad(mixture, (0, 0, left_context_size, right_context_size, 0, 0))
+    soi_windows = soi.unfold(
+        1, left_context_size + window_size + right_context_size, window_size
+    ).reshape(
+        soi.shape[0], -1, (left_context_size + window_size + right_context_size) * 2
     )
     mixture_windows = mixture.unfold(
-        1, context_size + window_size, window_size
-    ).reshape(soi.shape[0], -1, (window_size + context_size) * 2)
+        1, left_context_size + window_size + right_context_size, window_size
+    ).reshape(
+        soi.shape[0], -1, (left_context_size + window_size + right_context_size) * 2
+    )
 
     assert soi_windows.shape[0] == soi_target.shape[0], (
         soi_windows.shape,
@@ -163,6 +182,7 @@ def run_inference(
     soi_type: str,
     device: torch.device,
     batch_size: int = 32,
+    decoder_only: bool = False,
 ):
     demod_soi = get_soi_demod_fn(soi_type)
 
@@ -170,7 +190,11 @@ def run_inference(
         raise ValueError(f"Checkpoint directory {checkpoint_dir} does not exist")
     checkpoint = torch.load(checkpoint_dir, map_location="cpu")
     config = ConfigDict(checkpoint["cfg"])
-    model = Transformer(**config.model_config[1]).to(device)
+
+    if decoder_only:
+        model = TransformerDecoder(**config.model_config[1]).to(device)
+    else:
+        model = Transformer(**config.model_config[1]).to(device)
 
     try:
         model.load_state_dict(checkpoint["model"])
@@ -215,11 +239,14 @@ def run_inference(
             soi = model.embed_patch(soi.to(device))
             mixture = model.embed_patch(mixture.to(device))
 
-            soi_est = model.generate(
-                cond=mixture,
-                window_size=window_size,
-                context_size=context_size,
-            )
+            kwargs = {}
+            if decoder_only:
+                kwargs["input"] = mixture
+            else:
+                kwargs["cond"] = mixture
+                kwargs["window_size"] = window_size
+                kwargs["context_size"] = context_size
+            soi_est = model.generate(**kwargs)
             waveform = (
                 soi_est.cpu()
                 .reshape(*soi_est.shape[:2], 2, window_size)
@@ -329,7 +356,8 @@ def estimate_covariance(generate_soi: Callable, interference_root_dir: str):
             all_interference.shape[1] - 40960 + 16, size=all_interference.shape[0]
         )
         indices = tf.cast(
-            rand_start_idx.reshape(-1, 1) + np.arange(40960 - 16).reshape(1, -1), tf.int32
+            rand_start_idx.reshape(-1, 1) + np.arange(40960 - 16).reshape(1, -1),
+            tf.int32,
         )
         all_interference = tf.experimental.numpy.take_along_axis(
             all_interference, indices, axis=1
@@ -419,8 +447,8 @@ def main(_):
     testset_identifier = FLAGS.testset_identifier
     id_string = FLAGS.id_string
 
-    if not os.path.exists("eval_outputs"):
-        os.makedirs("eval_outputs")
+    if not os.path.exists("/home/tejasj/data2/RF_transformer/eval_outputs"):
+        os.makedirs("/home/tejasj/data2/RF_transformer/eval_outputs")
 
     if FLAGS.lmmse:
         id_string = "lmmse"
@@ -434,7 +462,7 @@ def main(_):
         )
         np.save(
             os.path.join(
-                "eval_outputs",
+                "/home/tejasj/data2/RF_transformer/eval_outputs",
                 "unsynchronized",
                 f"{id_string}_{testset_identifier}_estimated_soi_{FLAGS.soi_type}"
                 f"_{FLAGS.interference_sig_type}",
@@ -443,7 +471,7 @@ def main(_):
         )
         np.save(
             os.path.join(
-                "eval_outputs",
+                "/home/tejasj/data2/RF_transformer/eval_outputs",
                 "unsynchronized",
                 f"{id_string}_{testset_identifier}_estimated_bits_{FLAGS.soi_type}"
                 f"_{FLAGS.interference_sig_type}",
@@ -462,7 +490,7 @@ def main(_):
         )
         np.save(
             os.path.join(
-                "eval_outputs",
+                "/home/tejasj/data2/RF_transformer/eval_outputs",
                 "unsynchronized",
                 f"{id_string}_{testset_identifier}_estimated_soi_{FLAGS.soi_type}"
                 f"_{FLAGS.interference_sig_type}",
@@ -471,15 +499,13 @@ def main(_):
         )
         np.save(
             os.path.join(
-                "eval_outputs",
+                "/home/tejasj/data2/RF_transformer/eval_outputs",
                 "unsynchronized",
                 f"{id_string}_{testset_identifier}_estimated_bits_{FLAGS.soi_type}"
                 f"_{FLAGS.interference_sig_type}",
             ),
             bit1_est,
         )
-
-        exit(0)
     else:
         sig1_gt, bit1_gt, sig1_est, bit1_est = run_inference(
             FLAGS.soi_root_dir,
@@ -488,11 +514,12 @@ def main(_):
             FLAGS.soi_type,
             torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
             FLAGS.batch_size,
+            FLAGS.decoder_only,
         )
 
         np.save(
             os.path.join(
-                "eval_outputs",
+                "/home/tejasj/data2/RF_transformer/eval_outputs",
                 "unsynchronized",
                 f"gt_{testset_identifier}_soi_{FLAGS.soi_type}"
                 f"_{FLAGS.interference_sig_type}",
@@ -501,7 +528,7 @@ def main(_):
         )
         np.save(
             os.path.join(
-                "eval_outputs",
+                "/home/tejasj/data2/RF_transformer/eval_outputs",
                 "unsynchronized",
                 f"gt_{testset_identifier}_bits_{FLAGS.soi_type}"
                 f"_{FLAGS.interference_sig_type}",
@@ -510,7 +537,7 @@ def main(_):
         )
         np.save(
             os.path.join(
-                "eval_outputs",
+                "/home/tejasj/data2/RF_transformer/eval_outputs",
                 "unsynchronized",
                 f"{id_string}_{testset_identifier}_estimated_soi_{FLAGS.soi_type}"
                 f"_{FLAGS.interference_sig_type}",
@@ -519,7 +546,7 @@ def main(_):
         )
         np.save(
             os.path.join(
-                "eval_outputs",
+                "/home/tejasj/data2/RF_transformer/eval_outputs",
                 "unsynchronized",
                 f"{id_string}_{testset_identifier}_estimated_bits_{FLAGS.soi_type}"
                 f"_{FLAGS.interference_sig_type}",

@@ -101,7 +101,7 @@ def main(_):
         (mse_mean, ber_mean),
         open(
             os.path.join(
-                "eval_outputs/results/unsynchronized",
+                "/home/tejasj/data2/RF_transformer/eval_outputs/results/unsynchronized",
                 f"{id_string}_{testset_identifier}_exports_summary_{soi_type}"
                 f"_{interference_sig_type}.pkl",
             ),
@@ -111,7 +111,7 @@ def main(_):
 
     np.savetxt(
         os.path.join(
-            "eval_outputs/results/unsynchronized",
+            "/home/tejasj/data2/RF_transformer/eval_outputs/results/unsynchronized",
             f"{id_string}_{testset_identifier}_exports_summary_{soi_type}"
             f"_{interference_sig_type}.csv",
         ),
