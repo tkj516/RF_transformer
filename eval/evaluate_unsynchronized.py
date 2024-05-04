@@ -20,7 +20,7 @@ from models.transformer_decoder import Transformer as TransformerDecoder
 from torch.utils.data import Dataset, DataLoader
 from utils.dataset import get_soi_generation_fn
 
-tf.config.set_visible_devices([], "GPU")
+# tf.config.set_visible_devices([], "GPU")
 
 
 # Set random seeds for reproducibility
