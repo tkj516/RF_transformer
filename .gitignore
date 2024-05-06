@@ -13,3 +13,4 @@ input.txt
 *.h5
 rftorch_environment.yml
 *.csv
+*.png

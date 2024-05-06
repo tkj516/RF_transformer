@@ -17,6 +17,7 @@ from tqdm import tqdm
 import rfcutils2 as rfcutils
 from models.transformer import Transformer
 from models.transformer_decoder import Transformer as TransformerDecoder
+from models.wavenet import Wave
 from torch.utils.data import Dataset, DataLoader
 from utils.dataset import get_soi_generation_fn
 
@@ -56,6 +57,7 @@ flags.DEFINE_bool("lmmse", default=False, help="Run LMMSE")
 flags.DEFINE_bool(
     "decoder_only", default=False, help="Use decoder only transformer model."
 )
+flags.DEFINE_bool("wavenet", default=False, help="Use wavenet model.")
 
 
 ALL_SINR = np.arange(-30, 0.1, 3)
@@ -183,6 +185,7 @@ def run_inference(
     device: torch.device,
     batch_size: int = 32,
     decoder_only: bool = False,
+    wavenet: bool = False,
 ):
     demod_soi = get_soi_demod_fn(soi_type)
 
@@ -193,6 +196,8 @@ def run_inference(
 
     if decoder_only:
         model = TransformerDecoder(**config.model_config[1]).to(device)
+    elif wavenet:
+        model = Wave(**config.model_config[1]).to(device)
     else:
         model = Transformer(**config.model_config[1]).to(device)
 
@@ -205,9 +210,6 @@ def run_inference(
         model.load_state_dict(new_state_dict)
     model.eval()
     model.to(device)
-
-    window_size = config.dataset_config[1]["window_size"]
-    context_size = config.dataset_config[1]["context_size"]
 
     dataset = UnsynchronizedRFTestDataset(
         soi_root_dir=soi_root_dir,
@@ -226,34 +228,54 @@ def run_inference(
             soi = inputs["soi"]
             interference = inputs["interference"]
 
-            processed = process_inputs(
-                soi,
-                interference,
-                sinr_db,
-                window_size,
-                context_size,
-            )
-
-            soi = processed["soi"]
-            mixture = processed["mixture"]
-            soi = model.embed_patch(soi.to(device))
-            mixture = model.embed_patch(mixture.to(device))
-
-            kwargs = {}
-            if decoder_only:
-                kwargs["input"] = mixture
+            if FLAGS.wavenet:
+                coeff = 10 ** (-0.5 * sinr_db / 10)
+                rand_phase = np.random.rand()
+                coeff = coeff * np.exp(1j * 2 * np.pi * rand_phase)
+                mixture = soi + coeff * interference
+                
+                soi_est = model(
+                    torch.view_as_real(mixture)
+                    .to(torch.float32)
+                    .permute(0, 2, 1)
+                    .contiguous()
+                    .to(device)
+                )
+                waveform = torch.view_as_complex(
+                    soi_est.cpu().permute(0, 2, 1).contiguous()
+                )
             else:
-                kwargs["cond"] = mixture
-                kwargs["window_size"] = window_size
-                kwargs["context_size"] = context_size
-            soi_est = model.generate(**kwargs)
-            waveform = (
-                soi_est.cpu()
-                .reshape(*soi_est.shape[:2], 2, window_size)
-                .permute(0, 1, 3, 2)
-                .reshape(soi_est.shape[0], -1, 2)
-            )
-            waveform = torch.view_as_complex(waveform)
+                window_size = config.dataset_config[1]["window_size"]
+                context_size = config.dataset_config[1]["context_size"]
+
+                processed = process_inputs(
+                    soi,
+                    interference,
+                    sinr_db,
+                    window_size,
+                    context_size,
+                )
+
+                soi = processed["soi"]
+                mixture = processed["mixture"]
+                soi = model.embed_patch(soi.to(device))
+                mixture = model.embed_patch(mixture.to(device))
+
+                kwargs = {}
+                if decoder_only:
+                    kwargs["input"] = mixture
+                else:
+                    kwargs["cond"] = mixture
+                    kwargs["window_size"] = window_size
+                    kwargs["context_size"] = context_size
+                soi_est = model.generate(**kwargs)
+                waveform = (
+                    soi_est.cpu()
+                    .reshape(*soi_est.shape[:2], 2, window_size)
+                    .permute(0, 1, 3, 2)
+                    .reshape(soi_est.shape[0], -1, 2)
+                )
+                waveform = torch.view_as_complex(waveform)
 
             slice_idx = (16 - inputs["soi_offset"]).reshape(-1, 1) + torch.arange(
                 40960 - 16,
@@ -507,6 +529,8 @@ def main(_):
             bit1_est,
         )
     else:
+        assert not (FLAGS.decoder_only and FLAGS.wavenet)
+
         sig1_gt, bit1_gt, sig1_est, bit1_est = run_inference(
             FLAGS.soi_root_dir,
             FLAGS.interference_root_dir,
@@ -515,6 +539,7 @@ def main(_):
             torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
             FLAGS.batch_size,
             FLAGS.decoder_only,
+            FLAGS.wavenet,
         )
 
         np.save(

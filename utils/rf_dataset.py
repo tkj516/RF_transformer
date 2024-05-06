@@ -1,6 +1,6 @@
 import glob
 import os
-from typing import Tuple, Union
+from typing import List, Tuple, Union
 
 import numpy as np
 import torch
@@ -145,23 +145,53 @@ class ICASSPDataset(Dataset):
         }
 
 
-class UnsynchronizedRFDataset(RFDatasetBase):
+class UnsynchronizedRFDataset(Dataset):
     def __init__(
         self,
-        soi_root_dir: str,
-        interference_root_dir: str,
+        soi_root_dir: Union[str, List[str]],
+        interference_root_dir: Union[str, List[str]],
         window_size: int,
         context_size: Union[int, Tuple[int, int]],
         signal_length: int,
         number_soi_offsets: int,
         use_rand_phase: bool = True,
     ):
-        super().__init__(
-            soi_root_dir=soi_root_dir,
-            interference_root_dir=interference_root_dir,
-            window_size=window_size,
-            context_size=context_size,
-        )
+        super().__init__()
+
+        self.soi_root_dir = soi_root_dir
+        self.interference_root_dir = interference_root_dir
+        self.window_size = window_size
+
+        if isinstance(context_size, int):
+            self.left_context_size = context_size
+            self.right_context_size = 0
+        else:
+            self.left_context_size = context_size[0]
+            self.right_context_size = context_size[1]
+
+        if isinstance(soi_root_dir, str):
+            self.soi_files = glob.glob(os.path.join(soi_root_dir, "*.npy"))
+        elif isinstance(soi_root_dir, list):
+            self.soi_files = []
+            for root_dir in soi_root_dir:
+                self.soi_files.extend(glob.glob(os.path.join(root_dir, "*.npy")))
+        else:
+            raise ValueError("soi_root_dir should be either str or list of str")
+
+        if isinstance(interference_root_dir, str):
+            self.interference_files = glob.glob(
+                os.path.join(interference_root_dir, "*.npy")
+            )
+        elif isinstance(interference_root_dir, list):
+            self.interference_files = []
+            for root_dir in interference_root_dir:
+                self.interference_files.extend(
+                    glob.glob(os.path.join(root_dir, "*.npy"))
+                )
+        else:
+            raise ValueError(
+                "interference_root_dir should be either str or list of str"
+            )
 
         assert (
             signal_length % window_size == 0
@@ -243,16 +273,37 @@ class UnsynchronizedRFDataset(RFDatasetBase):
 class UnsynchronizedRFDatasetWaveNet(Dataset):
     def __init__(
         self,
-        soi_root_dir: str,
-        interference_root_dir: str,
+        soi_root_dir: Union[str, List[str]],
+        interference_root_dir: Union[str, List[str]],
         signal_length: int,
         number_soi_offsets: int,
         use_rand_phase: bool = True,
     ):
-        self.soi_files = glob.glob(os.path.join(soi_root_dir, "*.npy"))
-        self.interference_files = glob.glob(
-            os.path.join(interference_root_dir, "*.npy")
-        )
+        super().__init__()
+
+        if isinstance(soi_root_dir, str):
+            self.soi_files = glob.glob(os.path.join(soi_root_dir, "*.npy"))
+        elif isinstance(soi_root_dir, list):
+            self.soi_files = []
+            for root_dir in soi_root_dir:
+                self.soi_files.extend(glob.glob(os.path.join(root_dir, "*.npy")))
+        else:
+            raise ValueError("soi_root_dir should be either str or list of str")
+
+        if isinstance(interference_root_dir, str):
+            self.interference_files = glob.glob(
+                os.path.join(interference_root_dir, "*.npy")
+            )
+        elif isinstance(interference_root_dir, list):
+            self.interference_files = []
+            for root_dir in interference_root_dir:
+                self.interference_files.extend(
+                    glob.glob(os.path.join(root_dir, "*.npy"))
+                )
+        else:
+            raise ValueError(
+                "interference_root_dir should be either str or list of str"
+            )
 
         self.signal_length = signal_length
         self.number_soi_offsets = number_soi_offsets
