@@ -17,6 +17,9 @@ flags.DEFINE_string(
     "id_string", default="transformer", help="Identifier of the output files"
 )
 flags.DEFINE_string("results_dir", default="", help="Path to the results directory")
+flags.DEFINE_string(
+    "output_dir", default="unsynchronized", help="Output directory for the results"
+)
 
 
 BATCH_SIZE = 50
@@ -101,7 +104,7 @@ def main(_):
         (mse_mean, ber_mean),
         open(
             os.path.join(
-                "/home/tejasj/data2/RF_transformer/eval_outputs/results/unsynchronized",
+                f"/home/tejasj/data2/RF_transformer/eval_outputs/results/{FLAGS.output_dir}",
                 f"{id_string}_{testset_identifier}_exports_summary_{soi_type}"
                 f"_{interference_sig_type}.pkl",
             ),
@@ -111,7 +114,7 @@ def main(_):
 
     np.savetxt(
         os.path.join(
-            "/home/tejasj/data2/RF_transformer/eval_outputs/results/unsynchronized",
+            f"/home/tejasj/data2/RF_transformer/eval_outputs/results/{FLAGS.output_dir}",
             f"{id_string}_{testset_identifier}_exports_summary_{soi_type}"
             f"_{interference_sig_type}.csv",
         ),

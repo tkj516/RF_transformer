@@ -58,6 +58,9 @@ flags.DEFINE_bool(
     "decoder_only", default=False, help="Use decoder only transformer model."
 )
 flags.DEFINE_bool("wavenet", default=False, help="Use wavenet model.")
+flags.DEFINE_string(
+    "output_dir", default="unsynchronized", help="Output directory for the results"
+)
 
 
 ALL_SINR = np.arange(-30, 0.1, 3)
@@ -233,7 +236,7 @@ def run_inference(
                 rand_phase = np.random.rand()
                 coeff = coeff * np.exp(1j * 2 * np.pi * rand_phase)
                 mixture = soi + coeff * interference
-                
+
                 soi_est = model(
                     torch.view_as_real(mixture)
                     .to(torch.float32)
@@ -485,7 +488,7 @@ def main(_):
         np.save(
             os.path.join(
                 "/home/tejasj/data2/RF_transformer/eval_outputs",
-                "unsynchronized",
+                FLAGS.output_dir,
                 f"{id_string}_{testset_identifier}_estimated_soi_{FLAGS.soi_type}"
                 f"_{FLAGS.interference_sig_type}",
             ),
@@ -494,7 +497,7 @@ def main(_):
         np.save(
             os.path.join(
                 "/home/tejasj/data2/RF_transformer/eval_outputs",
-                "unsynchronized",
+                FLAGS.output_dir,
                 f"{id_string}_{testset_identifier}_estimated_bits_{FLAGS.soi_type}"
                 f"_{FLAGS.interference_sig_type}",
             ),
@@ -513,7 +516,7 @@ def main(_):
         np.save(
             os.path.join(
                 "/home/tejasj/data2/RF_transformer/eval_outputs",
-                "unsynchronized",
+                FLAGS.output_dir,
                 f"{id_string}_{testset_identifier}_estimated_soi_{FLAGS.soi_type}"
                 f"_{FLAGS.interference_sig_type}",
             ),
@@ -522,7 +525,7 @@ def main(_):
         np.save(
             os.path.join(
                 "/home/tejasj/data2/RF_transformer/eval_outputs",
-                "unsynchronized",
+                FLAGS.output_dir,
                 f"{id_string}_{testset_identifier}_estimated_bits_{FLAGS.soi_type}"
                 f"_{FLAGS.interference_sig_type}",
             ),
@@ -545,7 +548,7 @@ def main(_):
         np.save(
             os.path.join(
                 "/home/tejasj/data2/RF_transformer/eval_outputs",
-                "unsynchronized",
+                FLAGS.output_dir,
                 f"gt_{testset_identifier}_soi_{FLAGS.soi_type}"
                 f"_{FLAGS.interference_sig_type}",
             ),
@@ -554,7 +557,7 @@ def main(_):
         np.save(
             os.path.join(
                 "/home/tejasj/data2/RF_transformer/eval_outputs",
-                "unsynchronized",
+                FLAGS.output_dir,
                 f"gt_{testset_identifier}_bits_{FLAGS.soi_type}"
                 f"_{FLAGS.interference_sig_type}",
             ),
@@ -563,7 +566,7 @@ def main(_):
         np.save(
             os.path.join(
                 "/home/tejasj/data2/RF_transformer/eval_outputs",
-                "unsynchronized",
+                FLAGS.output_dir,
                 f"{id_string}_{testset_identifier}_estimated_soi_{FLAGS.soi_type}"
                 f"_{FLAGS.interference_sig_type}",
             ),
@@ -572,7 +575,7 @@ def main(_):
         np.save(
             os.path.join(
                 "/home/tejasj/data2/RF_transformer/eval_outputs",
-                "unsynchronized",
+                FLAGS.output_dir,
                 f"{id_string}_{testset_identifier}_estimated_bits_{FLAGS.soi_type}"
                 f"_{FLAGS.interference_sig_type}",
             ),
