@@ -83,14 +83,14 @@ def main(_):
 
     sig1_est = np.load(
         os.path.join(
-            "eval_outputs",
+            "/home/tejasj/data2/RF_transformer/eval_outputs/synchronized",
             f"{id_string}_{testset_identifier}_estimated_soi_{soi_type}"
             f"_{interference_sig_type}.npy",
         )
     )
     bit1_est = np.load(
         os.path.join(
-            "eval_outputs",
+            "/home/tejasj/data2/RF_transformer/eval_outputs/synchronized",
             f"{id_string}_{testset_identifier}_estimated_bits_{soi_type}"
             f"_{interference_sig_type}.npy",
         )
@@ -103,13 +103,19 @@ def main(_):
         sig1_est, bit1_est, soi_type, interference_sig_type, testset_identifier
     )
 
-    os.makedirs(os.path.join("eval_outputs/results", f"{id_string}"), exist_ok=True)
+    os.makedirs(
+        os.path.join(
+            "/home/tejasj/data2/RF_transformer/eval_outputs/synchronized/results",
+            f"{id_string}",
+        ),
+        exist_ok=True,
+    )
 
     pickle.dump(
         (mse_mean, ber_mean),
         open(
             os.path.join(
-                "eval_outputs/results",
+                "/home/tejasj/data2/RF_transformer/eval_outputs/synchronized/results",
                 f"{id_string}_{testset_identifier}_exports_summary_{soi_type}"
                 f"_{interference_sig_type}.pkl",
             ),
@@ -119,7 +125,7 @@ def main(_):
 
     np.savetxt(
         os.path.join(
-            "eval_outputs/results",
+            "/home/tejasj/data2/RF_transformer/eval_outputs/synchronized/results",
             f"{id_string}_{testset_identifier}_exports_summary_{soi_type}"
             f"_{interference_sig_type}.csv",
         ),
