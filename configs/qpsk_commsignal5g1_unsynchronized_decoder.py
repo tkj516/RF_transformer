@@ -51,7 +51,7 @@ def get_config():
         ml_collections.ConfigDict(dict()),
     ]
 
-    config.trainer_config.model_dir="checkpoints/qpsk_commsignal2_unsynchronized_decoder_test"
+    config.trainer_config.model_dir="checkpoints/qpsk_commsignal5g1_unsynchronized_decoder"
     config.trainer_config.batch_size=40
     config.trainer_config.train_fraction=0.95
     config.trainer_config.distributed=True
