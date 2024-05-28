@@ -5,7 +5,7 @@ This repository contains code for various experiments centered around using tran
 
 ## Installing Anaconda Environment
 
-conda env create -f environment.yml
+    conda env create -f environment.yml
 
 ## Repository Structure
 
