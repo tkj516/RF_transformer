@@ -3,13 +3,17 @@
 
 This repository contains code for various experiments centered around using transformers for generative modeling and source separation.
 
+## Installing Anaconda Environment
+
+conda env create -f environment.yml
+
 ## Repository Structure
 
 Broadly, an experiment is defined by a configuration file that is called within a general training script.  In order to make the configurations modular and flexible, we use the `ml_collections` package.  The script `main.py` is the main entrypoint to any experiment.  It uses `ml_collections` along with `abseil` to enable a command line-like interface and wrap all the all code related to setting up the hardware configuration for training, e.g., distributed training.
 
 As an example, to launch a transformer experiment that uses a decoder-only transformer for source separation of a QPSK + CommSignal2 mixture with SOI synchronization can be launched as follows.
 ```
-python main.py --trainer=transformer_decoder --config=configs/qpsk_commsignal2_config.py
+python main.py --trainer=transformer_decoder --config=configs/qpsk_commsignal2_unsynchronized_decoder.py
 ```
 The `--trainer` flag denotes which training script/experiment is intended and the `--config` flag specifies the location of the configuration file.
 
