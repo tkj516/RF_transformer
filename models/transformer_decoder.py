@@ -3,6 +3,7 @@ from typing import Tuple
 
 import torch
 import torch.nn as nn
+from layers.rms_norm import RMSNorm
 from torch.nn import functional as F
 
 
@@ -181,10 +182,19 @@ class DecoderBlock(nn.Module):
         dropout: float,
         block_size: int,
         causal: bool,
+        norm_type: str = "layer_norm",
         disable_flash: bool = False,
     ):
         super().__init__()
-        self.ln_1 = LayerNorm(embed_dim, bias=bias)
+
+        if norm_type == "layer_norm":
+            self.norm_fn = LayerNorm
+        elif norm_type == "rms_norm":
+            self.norm_fn = RMSNorm
+        else:
+            raise ValueError(f"Unknown norm type: {norm_type}")
+
+        self.ln_1 = self.norm_fn(embed_dim, bias=bias)
         self.attn_1 = MultiheadAttention(
             embed_dim=embed_dim,
             n_head=n_head,
@@ -194,7 +204,7 @@ class DecoderBlock(nn.Module):
             causal=causal,
             disable_flash=disable_flash,
         )
-        self.ln_2 = LayerNorm(embed_dim, bias=bias)
+        self.ln_2 = self.norm_fn(embed_dim, bias=bias)
         self.mlp = MLP(
             embed_dim=embed_dim,
             bias=bias,
@@ -220,6 +230,7 @@ class Decoder(nn.Module):
         dropout: float,
         block_size: int,
         causal: bool,
+        norm_type: str = "layer_norm",
         disable_flash: bool = False,
     ):
         super().__init__()
@@ -238,7 +249,15 @@ class Decoder(nn.Module):
             ]
         )
         self.input_projection = nn.Linear(input_dim, embed_dim)
-        self.final_layer_norm = LayerNorm(embed_dim, bias=bias)
+
+        if norm_type == "layer_norm":
+            self.norm_fn = LayerNorm
+        elif norm_type == "rms_norm":
+            self.norm_fn = RMSNorm
+        else:
+            raise ValueError(f"Unknown norm type: {norm_type}")
+
+        self.final_layer_norm = self.norm_fn(embed_dim, bias=bias)
         self.output_projection = nn.Linear(embed_dim, output_dim)
 
     def forward(self, x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
@@ -261,6 +280,7 @@ class Transformer(nn.Module):
         block_size: int,
         causal_decoder: bool,
         max_seq_len: int,
+        norm_type: str = "layer_norm",
         disable_flash: bool = False,
     ):
         super().__init__()
@@ -286,6 +306,7 @@ class Transformer(nn.Module):
             dropout=dropout,
             block_size=block_size,
             causal=causal_decoder,
+            norm_type=norm_type,
             disable_flash=disable_flash,
         )
         self.freqs_cis = precompute_freqs_cis(embed_dim // n_head, max_seq_len)
