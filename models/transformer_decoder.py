@@ -230,10 +230,16 @@ class Decoder(nn.Module):
         dropout: float,
         block_size: int,
         causal: bool,
+        deq: str = False,
         norm_type: str = "layer_norm",
         disable_flash: bool = False,
     ):
         super().__init__()
+
+        # If True, operate as a DEQ and share parameters across layers
+        self.deq = deq
+        self.n_layers = n_layers
+
         self.layers = nn.ModuleList(
             [
                 DecoderBlock(
@@ -245,7 +251,7 @@ class Decoder(nn.Module):
                     causal=causal,
                     disable_flash=disable_flash,
                 )
-                for _ in range(n_layers)
+                for _ in range(n_layers if not deq else 1)
             ]
         )
         self.input_projection = nn.Linear(input_dim, embed_dim)
@@ -261,8 +267,12 @@ class Decoder(nn.Module):
         self.output_projection = nn.Linear(embed_dim, output_dim)
 
     def forward(self, x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
-        for layer in self.layers:
-            x = layer(x, freqs_cis)
+        for i in range(self.n_layers):
+            x = (
+                self.layers[i](x, freqs_cis)
+                if not self.deq
+                else self.layers[0](x, freqs_cis)
+            )
         x = self.output_projection(self.final_layer_norm(x))
         return x
 
@@ -280,6 +290,7 @@ class Transformer(nn.Module):
         block_size: int,
         causal_decoder: bool,
         max_seq_len: int,
+        deq: str = False,
         norm_type: str = "layer_norm",
         disable_flash: bool = False,
     ):
@@ -306,6 +317,7 @@ class Transformer(nn.Module):
             dropout=dropout,
             block_size=block_size,
             causal=causal_decoder,
+            deq=deq,
             norm_type=norm_type,
             disable_flash=disable_flash,
         )
