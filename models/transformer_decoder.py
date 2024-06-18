@@ -66,6 +66,7 @@ class MultiheadAttention(nn.Module):
         dropout: float,
         block_size: int,
         causal: bool,
+        disable_flash: bool = False,
     ):
         super().__init__()
         assert embed_dim % n_head == 0
@@ -84,7 +85,10 @@ class MultiheadAttention(nn.Module):
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
-        self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
+        self.flash = (
+            hasattr(torch.nn.functional, "scaled_dot_product_attention")
+            and not disable_flash
+        )
         if not self.flash:
             print(
                 "WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0"
@@ -177,6 +181,7 @@ class DecoderBlock(nn.Module):
         dropout: float,
         block_size: int,
         causal: bool,
+        disable_flash: bool = False,
     ):
         super().__init__()
         self.ln_1 = LayerNorm(embed_dim, bias=bias)
@@ -187,6 +192,7 @@ class DecoderBlock(nn.Module):
             dropout=dropout,
             block_size=block_size,
             causal=causal,
+            disable_flash=disable_flash,
         )
         self.ln_2 = LayerNorm(embed_dim, bias=bias)
         self.mlp = MLP(
@@ -195,9 +201,7 @@ class DecoderBlock(nn.Module):
             dropout=dropout,
         )
 
-    def forward(
-        self, x: torch.Tensor, freqs_cis: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
         x_norm = self.ln_1(x)
         x = x + self.attn_1(x_norm, x_norm, freqs_cis)
         x = x + self.mlp(self.ln_2(x))
@@ -216,6 +220,7 @@ class Decoder(nn.Module):
         dropout: float,
         block_size: int,
         causal: bool,
+        disable_flash: bool = False,
     ):
         super().__init__()
         self.layers = nn.ModuleList(
@@ -227,6 +232,7 @@ class Decoder(nn.Module):
                     dropout=dropout,
                     block_size=block_size,
                     causal=causal,
+                    disable_flash=disable_flash,
                 )
                 for _ in range(n_layers)
             ]
@@ -235,9 +241,7 @@ class Decoder(nn.Module):
         self.final_layer_norm = LayerNorm(embed_dim, bias=bias)
         self.output_projection = nn.Linear(embed_dim, output_dim)
 
-    def forward(
-        self, x: torch.Tensor, freqs_cis: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
         for layer in self.layers:
             x = layer(x, freqs_cis)
         x = self.output_projection(self.final_layer_norm(x))
@@ -257,6 +261,7 @@ class Transformer(nn.Module):
         block_size: int,
         causal_decoder: bool,
         max_seq_len: int,
+        disable_flash: bool = False,
     ):
         super().__init__()
 
@@ -281,6 +286,7 @@ class Transformer(nn.Module):
             dropout=dropout,
             block_size=block_size,
             causal=causal_decoder,
+            disable_flash=disable_flash,
         )
         self.freqs_cis = precompute_freqs_cis(embed_dim // n_head, max_seq_len)
 
@@ -309,9 +315,7 @@ class Transformer(nn.Module):
     def embed_patch(self, input: torch.Tensor) -> torch.Tensor:
         return self.input_projection(input)
 
-    def forward(
-        self, input: torch.Tensor, start_pos: int = 0
-    ) -> torch.Tensor:
+    def forward(self, input: torch.Tensor, start_pos: int = 0) -> torch.Tensor:
         _, t, _ = input.shape
         assert t <= self.block_size, (
             f"Cannot forward sequence of length {t}, "
