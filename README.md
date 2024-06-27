@@ -187,6 +187,42 @@ An example register to test our different optimizers is:
     }
     optimizer_builder = ClassBuilder(OPTIMIZER_REGISTER)
 
+## Create the synthetic SOI datasets
+
+A synthetic 16 x oversampled QPSK dataset with samples of length 40976 (2561 symbols) 
+can be created by running the command below.  Note that the synchronous dataset has 
+samples of length 40960 but since we want random shifts during training we generate a 
+QPSK signal withan extra symbol (one symbol = 16 samples)
+
+```
+python prepare_synthetic_datasets.py \
+--num_samples=200000 \
+--signal_length=2561 \
+--root_dir=qpsk \
+--signal_name=qpsk \
+qpsk
+```
+
+As another example a synthetic OFDM (QPSK) signal with 512 symbols 
+(one symbol = 80 samples) can be generated as 
+
+```
+python prepare_synthetic_datasets.py \
+--num_samples=200000 \
+--signal_length=512 \
+--root_dir=ofdm \
+--signal_name=ofdm \
+ofdm
+```
+
+If you want to change the underlying constellation you can modify the following line
+in `rfcutils/ofdm_helper_fn.py`
+ 
+```
+# K-QAM constellation
+NUM_BITS_PER_SYMBOL = <NUMBER_BITS_PER_SYMBOL>
+```
+
 ## Pre-process and create the interference datasets
 
 Download the inteference frames from [here](https://www.dropbox.com/scl/fi/zlvgxlhp8het8j8swchgg/dataset.zip?rlkey=4rrm2eyvjgi155ceg8gxb5fc4&dl=0)

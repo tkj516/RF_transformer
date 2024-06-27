@@ -3,7 +3,7 @@ from typing import Tuple
 
 import torch
 import torch.nn as nn
-from rms_norm import RMSNorm
+from models.rms_norm import RMSNorm
 from torch.nn import functional as F
 
 
